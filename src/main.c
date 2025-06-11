@@ -9,9 +9,12 @@ int main(int argc, char *argv[])
 
   char input[100];
 
-  printf("$ ");
-  fgets(input, 100, stdin);
-  input[strcspn(input, "\n")] = 0;
-  printf("%s: command not found\n", input);
+  while (1)
+  {
+    printf("$ ");
+    fgets(input, 100, stdin);
+    input[strcspn(input, "\n")] = 0;
+    printf("%s: command not found\n", input);
+  }
   return 0;
 }
