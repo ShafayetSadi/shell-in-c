@@ -2,19 +2,30 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define INPUT_SIZE 100
+
 int main(int argc, char *argv[])
 {
-  // Flush after every printf
-  setbuf(stdout, NULL);
+  setbuf(stdout, NULL); // Flush after every printf
 
-  char input[100];
+  char input[INPUT_SIZE];
 
   while (1)
   {
     printf("$ ");
-    fgets(input, 100, stdin);
+    if (!fgets(input, INPUT_SIZE, stdin))
+    {
+      perror("\n");
+      break;
+    }
     input[strcspn(input, "\n")] = 0;
-    printf("%s: command not found\n", input);
+
+    if (strlen(input) == 0)
+      continue;
+    if (strncmp(input, "exit", 4) == 0)
+      return 0;
+    else
+      printf("%s: command not found\n", input);
   }
   return 0;
 }
