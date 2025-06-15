@@ -10,6 +10,15 @@
 #define INPUT_SIZE 1024
 #define MAX_PATH_TOKENS 100
 #define MAX_PATH_LENGTH 512
+#define MAX_ARGS 100
+
+// Command structure
+typedef struct
+{
+  char *name;
+  char **args;
+  int arg_count;
+} Command;
 
 // Function declarations
 void get_input_command(char *input);
@@ -17,8 +26,11 @@ void execute_echo(const char *input);
 void execute_type(const char *command, char **path_tokens, int path_count);
 void not_found(const char *command);
 void free_path_tokens(char **tokens, int count);
+void free_command(Command *cmd);
 int check_builtin_command(const char *command);
 int find_command_in_path(const char *command, char **path_tokens, int path_count);
+int parse_command(const char *input, Command *cmd);
+int execute_program(const char *program, char **path_tokens, int path_count, char **args, int arg_count);
 
 void get_input_command(char *input)
 {
@@ -63,6 +75,18 @@ void free_path_tokens(char **tokens, int count)
   }
 }
 
+void free_command(Command *cmd)
+{
+  if (cmd->args != NULL)
+  {
+    for (int i = 0; i < cmd->arg_count; i++)
+    {
+      free(cmd->args[i]);
+    }
+    free(cmd->args);
+  }
+}
+
 int check_builtin_command(const char *command)
 {
   const char *builtin_commands[] = {"echo", "exit", "type"};
@@ -100,6 +124,46 @@ int find_command_in_path(const char *command, char **path_tokens, int path_count
   return 0;
 }
 
+int parse_command(const char *input, Command *cmd)
+{
+  char *input_copy = strdup(input);
+  if (input_copy == NULL)
+  {
+    perror("Memory allocation failed");
+    return 0;
+  }
+
+  cmd->args = malloc(MAX_ARGS * sizeof(char *));
+  if (cmd->args == NULL)
+  {
+    perror("Memory allocation failed");
+    free(input_copy);
+    return 0;
+  }
+
+  cmd->arg_count = 0;
+  char *token = strtok(input_copy, " ");
+
+  while (token != NULL && cmd->arg_count < MAX_ARGS)
+  {
+    cmd->args[cmd->arg_count] = strdup(token);
+    if (cmd->args[cmd->arg_count] == NULL)
+    {
+      perror("Memory allocation failed");
+      free_command(cmd);
+      free(input_copy);
+      return 0;
+    }
+    cmd->arg_count++;
+    token = strtok(NULL, " ");
+  }
+
+  cmd->args[cmd->arg_count] = NULL;
+  cmd->name = cmd->args[0];
+  free(input_copy);
+  return 1;
+}
+
 int execute_program(const char *program, char **path_tokens, int path_count, char **args, int arg_count)
 {
   pid_t pid = fork();
@@ -107,7 +171,6 @@ int execute_program(const char *program, char **path_tokens, int path_count, cha
   {
     // Child process
     execvp(program, args);
-    // perror("execvp failed");
     exit(127);
   }
   else if (pid > 0)
@@ -120,30 +183,12 @@ int execute_program(const char *program, char **path_tokens, int path_count, cha
       int exit_status = WEXITSTATUS(status);
       if (exit_status == 127)
       {
-        // execvp failed
         return 0;
       }
-      else
-      {
-        // program executed successfully
-        return 1;
-      }
+      return 1;
     }
   }
-  else
-  {
-    // perror("fork failed");
-    return 0;
-  }
   return 0;
-}
-
-void free_args(char **args, int count)
-{
-  for (int i = 0; i < count; i++)
-  {
-    free(args[i]);
-  }
 }
 
 int main(int argc, char *argv[])
@@ -164,7 +209,6 @@ int main(int argc, char *argv[])
 
   // Tokenize PATH
   char *path_copy = strdup(path);
-
   if (path_copy == NULL)
   {
     perror("Memory allocation failed");
@@ -197,47 +241,36 @@ int main(int argc, char *argv[])
     {
       continue;
     }
-    else if (strcmp(input, "exit 0") == 0)
+
+    Command cmd = {0};
+    if (!parse_command(input, &cmd))
     {
+      continue;
+    }
+
+    if (strcmp(cmd.name, "exit") == 0)
+    {
+      free_command(&cmd);
       free_path_tokens(path_tokens, path_count);
       exit(0);
     }
-    else if (strncmp(input, "echo ", 5) == 0)
+    else if (strcmp(cmd.name, "echo") == 0)
     {
       execute_echo(input);
     }
-    else if (strncmp(input, "type ", 5) == 0)
+    else if (strcmp(cmd.name, "type") == 0 && cmd.arg_count > 1)
     {
-      execute_type(input + 5, path_tokens, path_count);
+      execute_type(cmd.args[1], path_tokens, path_count);
     }
     else
     {
-      char *args[INPUT_SIZE];
-      int arg_count = 0;
-      char *token = strtok(input, " ");
-
-      while (token != NULL && arg_count < INPUT_SIZE)
-      {
-        args[arg_count] = strdup(token);
-        if (args[arg_count] == NULL)
-        {
-          perror("Memory allocation failed");
-          free_args(args, arg_count);
-          return 1;
-        }
-        arg_count++;
-        token = strtok(NULL, " ");
-      }
-
-      args[arg_count] = NULL;
-
-      if (execute_program(args[0], path_tokens, path_count, args, arg_count) != 1)
+      if (!execute_program(cmd.name, path_tokens, path_count, cmd.args, cmd.arg_count))
       {
         not_found(input);
       }
-
-      free_args(args, arg_count);
     }
+
+    free_command(&cmd);
   }
 
   free_path_tokens(path_tokens, path_count);
