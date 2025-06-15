@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
+#include <sys/wait.h>
 
 #define INPUT_SIZE 1024
 #define MAX_PATH_TOKENS 100
@@ -99,6 +100,52 @@ int find_command_in_path(const char *command, char **path_tokens, int path_count
   return 0;
 }
 
+int execute_program(const char *program, char **path_tokens, int path_count, char **args, int arg_count)
+{
+  pid_t pid = fork();
+  if (pid == 0)
+  {
+    // Child process
+    execvp(program, args);
+    // perror("execvp failed");
+    exit(127);
+  }
+  else if (pid > 0)
+  {
+    // Parent process
+    int status;
+    wait(&status);
+    if (WIFEXITED(status))
+    {
+      int exit_status = WEXITSTATUS(status);
+      if (exit_status == 127)
+      {
+        // execvp failed
+        return 0;
+      }
+      else
+      {
+        // program executed successfully
+        return 1;
+      }
+    }
+  }
+  else
+  {
+    // perror("fork failed");
+    return 0;
+  }
+  return 0;
+}
+
+void free_args(char **args, int count)
+{
+  for (int i = 0; i < count; i++)
+  {
+    free(args[i]);
+  }
+}
+
 int main(int argc, char *argv[])
 {
   setbuf(stdout, NULL); // Flush after every printf
@@ -150,14 +197,12 @@ int main(int argc, char *argv[])
     {
       continue;
     }
-
-    if (strcmp(input, "exit 0") == 0)
+    else if (strcmp(input, "exit 0") == 0)
     {
       free_path_tokens(path_tokens, path_count);
-      return 0;
+      exit(0);
     }
-
-    if (strncmp(input, "echo ", 5) == 0)
+    else if (strncmp(input, "echo ", 5) == 0)
     {
       execute_echo(input);
     }
@@ -167,7 +212,31 @@ int main(int argc, char *argv[])
     }
     else
     {
-      not_found(input);
+      char *args[INPUT_SIZE];
+      int arg_count = 0;
+      char *token = strtok(input, " ");
+
+      while (token != NULL && arg_count < INPUT_SIZE)
+      {
+        args[arg_count] = strdup(token);
+        if (args[arg_count] == NULL)
+        {
+          perror("Memory allocation failed");
+          free_args(args, arg_count);
+          return 1;
+        }
+        arg_count++;
+        token = strtok(NULL, " ");
+      }
+
+      args[arg_count] = NULL;
+
+      if (execute_program(args[0], path_tokens, path_count, args, arg_count) != 1)
+      {
+        not_found(input);
+      }
+
+      free_args(args, arg_count);
     }
   }
 
