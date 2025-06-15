@@ -62,9 +62,26 @@ void execute_pwd(const char *input)
 
 void execute_cd(const char *input)
 {
-  if (chdir(input) != 0)
+  const char *target_dir;
+
+  // If no argument or "~", go to home directory
+  if (input == NULL || strcmp(input, "~") == 0)
   {
-    printf("cd: %s: No such file or directory\n", input);
+    target_dir = getenv("HOME");
+    if (target_dir == NULL)
+    {
+      printf("cd: HOME environment variable not set\n");
+      return;
+    }
+  }
+  else
+  {
+    target_dir = input;
+  }
+
+  if (chdir(target_dir) != 0)
+  {
+    printf("cd: %s: No such file or directory\n", target_dir);
   }
 }
 
@@ -281,7 +298,8 @@ int main(int argc, char *argv[])
     }
     else if (strcmp(cmd.name, "cd") == 0)
     {
-      execute_cd(cmd.args[1]);
+      const char *target_dir = (cmd.arg_count > 1) ? cmd.args[1] : NULL;
+      execute_cd(target_dir);
     }
     else if (strcmp(cmd.name, "type") == 0 && cmd.arg_count > 1)
     {
