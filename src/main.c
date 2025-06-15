@@ -23,6 +23,7 @@ typedef struct
 // Function declarations
 void get_input_command(char *input);
 void execute_echo(const char *input);
+void execute_pwd(const char *input);
 void execute_type(const char *command, char **path_tokens, int path_count);
 void not_found(const char *command);
 void free_path_tokens(char **tokens, int count);
@@ -49,6 +50,13 @@ void get_input_command(char *input)
 void execute_echo(const char *input)
 {
   printf("%s\n", input + 5);
+}
+
+void execute_pwd(const char *input)
+{
+  char cwd[INPUT_SIZE];
+  getcwd(cwd, sizeof(cwd));
+  printf("%s\n", cwd);
 }
 
 void execute_type(const char *command, char **path_tokens, int path_count)
@@ -89,7 +97,7 @@ void free_command(Command *cmd)
 
 int check_builtin_command(const char *command)
 {
-  const char *builtin_commands[] = {"echo", "exit", "type"};
+  const char *builtin_commands[] = {"echo", "exit", "type", "pwd"};
   const int num_builtins = sizeof(builtin_commands) / sizeof(builtin_commands[0]);
 
   for (int i = 0; i < num_builtins; i++)
@@ -257,6 +265,10 @@ int main(int argc, char *argv[])
     else if (strcmp(cmd.name, "echo") == 0)
     {
       execute_echo(input);
+    }
+    else if (strcmp(cmd.name, "pwd") == 0)
+    {
+      execute_pwd(input);
     }
     else if (strcmp(cmd.name, "type") == 0 && cmd.arg_count > 1)
     {
