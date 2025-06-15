@@ -13,6 +13,7 @@
 // Function declarations
 void get_input_command(char *input);
 void execute_echo(const char *input);
+void execute_type(const char *command, char **path_tokens, int path_count);
 void not_found(const char *command);
 void free_path_tokens(char **tokens, int count);
 int check_builtin_command(const char *command);
@@ -35,6 +36,17 @@ void get_input_command(char *input)
 void execute_echo(const char *input)
 {
   printf("%s\n", input + 5);
+}
+
+void execute_type(const char *command, char **path_tokens, int path_count)
+{
+  if (!check_builtin_command(command))
+  {
+    if (!find_command_in_path(command, path_tokens, path_count))
+    {
+      printf("%s: not found\n", command);
+    }
+  }
 }
 
 void not_found(const char *command)
@@ -68,42 +80,21 @@ int check_builtin_command(const char *command)
 
 int find_command_in_path(const char *command, char **path_tokens, int path_count)
 {
+  char fullpath[MAX_PATH_LENGTH];
+  struct stat file_stat;
+
   for (int i = 0; i < path_count; i++)
   {
-    DIR *dir = opendir(path_tokens[i]);
-    if (dir == NULL)
+    snprintf(fullpath, sizeof(fullpath), "%s/%s", path_tokens[i], command);
+
+    if (stat(fullpath, &file_stat) == 0)
     {
-      perror("Error opening directory");
-      continue;
-    }
-
-    struct dirent *entry;
-    char fullpath[MAX_PATH_LENGTH];
-    struct stat file_stat;
-
-    while ((entry = readdir(dir)) != NULL)
-    {
-      if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      if (S_ISREG(file_stat.st_mode) && (file_stat.st_mode & S_IXUSR))
       {
-        continue;
-      }
-
-      snprintf(fullpath, sizeof(fullpath), "%s/%s", path_tokens[i], entry->d_name);
-
-      if (stat(fullpath, &file_stat) == 0)
-      {
-        if (S_ISREG(file_stat.st_mode) && (file_stat.st_mode & S_IXUSR))
-        {
-          if (strcmp(entry->d_name, command) == 0)
-          {
-            printf("%s is %s\n", command, fullpath);
-            closedir(dir);
-            return 1;
-          }
-        }
+        printf("%s is %s\n", command, fullpath);
+        return 1;
       }
     }
-    closedir(dir);
   }
   return 0;
 }
@@ -172,14 +163,7 @@ int main(int argc, char *argv[])
     }
     else if (strncmp(input, "type ", 5) == 0)
     {
-      const char *command = input + 5;
-      if (!check_builtin_command(command))
-      {
-        if (!find_command_in_path(command, path_tokens, path_count))
-        {
-          printf("%s: not found\n", command);
-        }
-      }
+      execute_type(input + 5, path_tokens, path_count);
     }
     else
     {
