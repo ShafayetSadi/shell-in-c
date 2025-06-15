@@ -24,6 +24,7 @@ typedef struct
 void get_input_command(char *input);
 void execute_echo(const char *input);
 void execute_pwd(const char *input);
+void execute_cd(const char *input);
 void execute_type(const char *command, char **path_tokens, int path_count);
 void not_found(const char *command);
 void free_path_tokens(char **tokens, int count);
@@ -57,6 +58,14 @@ void execute_pwd(const char *input)
   char cwd[INPUT_SIZE];
   getcwd(cwd, sizeof(cwd));
   printf("%s\n", cwd);
+}
+
+void execute_cd(const char *input)
+{
+  if (chdir(input) != 0)
+  {
+    printf("cd: %s: No such file or directory\n", input);
+  }
 }
 
 void execute_type(const char *command, char **path_tokens, int path_count)
@@ -97,7 +106,7 @@ void free_command(Command *cmd)
 
 int check_builtin_command(const char *command)
 {
-  const char *builtin_commands[] = {"echo", "exit", "type", "pwd"};
+  const char *builtin_commands[] = {"echo", "exit", "type", "pwd", "cd"};
   const int num_builtins = sizeof(builtin_commands) / sizeof(builtin_commands[0]);
 
   for (int i = 0; i < num_builtins; i++)
@@ -269,6 +278,10 @@ int main(int argc, char *argv[])
     else if (strcmp(cmd.name, "pwd") == 0)
     {
       execute_pwd(input);
+    }
+    else if (strcmp(cmd.name, "cd") == 0)
+    {
+      execute_cd(cmd.args[1]);
     }
     else if (strcmp(cmd.name, "type") == 0 && cmd.arg_count > 1)
     {
