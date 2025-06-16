@@ -1,11 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
-#include <dirent.h>
-#include <errno.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
+#include <errno.h>
 
 #define INPUT_SIZE 1024
 #define MAX_PATH_TOKENS 100
@@ -22,9 +21,9 @@ typedef struct
 
 // Function declarations
 void get_input_command(char *input);
-void execute_echo(const char *input);
-void execute_pwd(const char *input);
-void execute_cd(const char *input);
+void execute_echo(const Command *cmd);
+void execute_pwd(void);
+void execute_cd(const char *target_dir);
 void execute_type(const char *command, char **path_tokens, int path_count);
 void not_found(const char *command);
 void free_path_tokens(char **tokens, int count);
@@ -33,6 +32,7 @@ int check_builtin_command(const char *command);
 int find_command_in_path(const char *command, char **path_tokens, int path_count);
 int parse_command(const char *input, Command *cmd);
 int execute_program(const char *program, char **path_tokens, int path_count, char **args, int arg_count);
+void print_debug_info(const Command *cmd);
 
 void get_input_command(char *input)
 {
@@ -48,40 +48,40 @@ void get_input_command(char *input)
   input[strcspn(input, "\n")] = '\0'; // Remove trailing newline
 }
 
-void execute_echo(const char *input)
+void execute_echo(const Command *cmd)
 {
-  printf("%s\n", input + 5);
+  for (int i = 1; i < cmd->arg_count; i++)
+  {
+    printf("%s ", cmd->args[i]);
+  }
+  printf("\n");
 }
 
-void execute_pwd(const char *input)
+void execute_pwd(void)
 {
   char cwd[INPUT_SIZE];
-  getcwd(cwd, sizeof(cwd));
-  printf("%s\n", cwd);
+  if (getcwd(cwd, sizeof(cwd)) != NULL)
+  {
+    printf("%s\n", cwd);
+  }
 }
 
-void execute_cd(const char *input)
+void execute_cd(const char *target_dir)
 {
-  const char *target_dir;
-
-  // If no argument or "~", go to home directory
-  if (input == NULL || strcmp(input, "~") == 0)
+  const char *dir = target_dir;
+  if (target_dir == NULL || strcmp(target_dir, "~") == 0)
   {
-    target_dir = getenv("HOME");
-    if (target_dir == NULL)
+    dir = getenv("HOME");
+    if (dir == NULL)
     {
       printf("cd: HOME environment variable not set\n");
       return;
     }
   }
-  else
-  {
-    target_dir = input;
-  }
 
-  if (chdir(target_dir) != 0)
+  if (chdir(dir) != 0)
   {
-    printf("cd: %s: No such file or directory\n", target_dir);
+    printf("cd: %s: No such file or directory\n", dir);
   }
 }
 
@@ -176,11 +176,49 @@ int parse_command(const char *input, Command *cmd)
   }
 
   cmd->arg_count = 0;
-  char *token = strtok(input_copy, " ");
+  char *current = input_copy;
 
-  while (token != NULL && cmd->arg_count < MAX_ARGS)
+  while (*current && cmd->arg_count < MAX_ARGS)
   {
-    cmd->args[cmd->arg_count] = strdup(token);
+    while (*current == ' ')
+      current++;
+    if (!*current)
+      break;
+
+    char *start = current;
+    char *arg_start = current;
+    int in_quotes = 0;
+
+    while (*current && (*current != ' ' || in_quotes))
+    {
+      if (*current == '\'')
+      {
+        if (!in_quotes)
+        {
+          // Start: quoted string
+          in_quotes = 1;
+          memmove(current, current + 1, strlen(current));
+        }
+        else
+        {
+          // End: quoted string
+          in_quotes = 0;
+          memmove(current, current + 1, strlen(current));
+        }
+      }
+      else
+      {
+        current++;
+      }
+    }
+
+    if (*current)
+    {
+      *current = '\0';
+      current++;
+    }
+
+    cmd->args[cmd->arg_count] = strdup(arg_start);
     if (cmd->args[cmd->arg_count] == NULL)
     {
       perror("Memory allocation failed");
@@ -189,7 +227,6 @@ int parse_command(const char *input, Command *cmd)
       return 0;
     }
     cmd->arg_count++;
-    token = strtok(NULL, " ");
   }
 
   cmd->args[cmd->arg_count] = NULL;
@@ -223,6 +260,17 @@ int execute_program(const char *program, char **path_tokens, int path_count, cha
     }
   }
   return 0;
+}
+
+void print_debug_info(const Command *cmd)
+{
+  printf("CMD: %s\n", cmd->name);
+  printf("ARGS: |");
+  for (int i = 0; i < cmd->arg_count; i++)
+  {
+    printf(" %s |", cmd->args[i]);
+  }
+  printf("\n");
 }
 
 int main(int argc, char *argv[])
@@ -281,6 +329,7 @@ int main(int argc, char *argv[])
     {
       continue;
     }
+    // print_debug_info(&cmd);
 
     if (strcmp(cmd.name, "exit") == 0)
     {
@@ -290,16 +339,15 @@ int main(int argc, char *argv[])
     }
     else if (strcmp(cmd.name, "echo") == 0)
     {
-      execute_echo(input);
+      execute_echo(&cmd);
     }
     else if (strcmp(cmd.name, "pwd") == 0)
     {
-      execute_pwd(input);
+      execute_pwd();
     }
     else if (strcmp(cmd.name, "cd") == 0)
     {
-      const char *target_dir = (cmd.arg_count > 1) ? cmd.args[1] : NULL;
-      execute_cd(target_dir);
+      execute_cd(cmd.arg_count > 1 ? cmd.args[1] : NULL);
     }
     else if (strcmp(cmd.name, "type") == 0 && cmd.arg_count > 1)
     {
@@ -309,7 +357,7 @@ int main(int argc, char *argv[])
     {
       if (!execute_program(cmd.name, path_tokens, path_count, cmd.args, cmd.arg_count))
       {
-        not_found(input);
+        not_found(cmd.name);
       }
     }
 
