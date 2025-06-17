@@ -196,6 +196,7 @@ int parse_command(const char *input, Command *cmd)
       {
         quote = *current;
       }
+
       if (*current == quote)
       {
         if (!in_quotes)
@@ -213,6 +214,10 @@ int parse_command(const char *input, Command *cmd)
       }
       else
       {
+        if (*current == '\\' && !in_quotes)
+        {
+          memmove(current, current + 1, strlen(current));
+        }
         current++;
       }
     }
