@@ -187,11 +187,16 @@ int parse_command(const char *input, Command *cmd)
 
     char *start = current;
     char *arg_start = current;
+    char quote = '\'';
     int in_quotes = 0;
 
     while (*current && (*current != ' ' || in_quotes))
     {
-      if (*current == '\'')
+      if ((*current == '\'' || *current == '\"') && !in_quotes)
+      {
+        quote = *current;
+      }
+      if (*current == quote)
       {
         if (!in_quotes)
         {
