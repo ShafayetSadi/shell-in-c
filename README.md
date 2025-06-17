@@ -1,34 +1,151 @@
-[![progress-banner](https://backend.codecrafters.io/progress/shell/fb0f436e-2caf-431d-a388-485f713729f5)](https://app.codecrafters.io/users/Shafayetsadi?r=2qF)
+# Custom Shell Implementation in C
 
-This is a starting point for C solutions to the
-["Build Your Own Shell" Challenge](https://app.codecrafters.io/courses/shell/overview).
+A POSIX-compliant shell implementation written in C that supports various shell features including command execution, built-in commands, and advanced string parsing capabilities.
 
-In this challenge, you'll build your own POSIX compliant shell that's capable of
-interpreting shell commands, running external programs and builtin commands like
-cd, pwd, echo and more. Along the way, you'll learn about shell command parsing,
-REPLs, builtin commands, and more.
+## Features
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+### Basic Shell Functionality
 
-# Passing the first stage
+- **REPL (Read-Eval-Print Loop)**: Interactive command-line interface with `$` prompt
+- **Command Execution**: Ability to execute external programs from PATH
+- **Error Handling**: Proper handling of invalid commands and error messages
 
-The entry point for your `shell` implementation is in `src/main.c`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+### Built-in Commands
 
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+- **exit**: Terminates the shell
+- **echo**: Prints arguments to stdout
+- **pwd**: Displays the current working directory
+- **cd**: Changes the current directory
+  - Supports absolute paths
+  - Supports relative paths
+  - Supports home directory (`~`)
+- **type**: Identifies command types
+  - Shows built-in commands
+  - Locates executable files in PATH
+
+### Advanced String Parsing
+
+- **Quote Handling**:
+  - Single quotes (`'`): Preserves literal string content
+  - Double quotes (`"`): Allows variable expansion
+- **Escape Sequences**:
+  - Backslash (`\`) outside quotes
+  - Backslash within single quotes
+  - Backslash within double quotes (special handling for `\"` and `\\`)
+
+## Building and Running
+
+### Prerequisites
+
+- CMake (version 3.10 or higher)
+- C compiler (GCC recommended)
+- Make
+
+### Build Instructions
+
+```bash
+# Create build directory
+mkdir build
+cd build
+
+# Configure and build
+cmake ..
+make
 ```
 
-Time to move on to the next stage!
+### Running the Shell
 
-# Stage 2 & beyond
+```bash
+./your_program.sh
+```
 
-Note: This section is for stages 2 and beyond.
+## Usage Examples
 
-1. Ensure you have `cmake` installed locally
-1. Run `./your_program.sh` to run your program, which is implemented in
-   `src/main.c`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+```bash
+$ echo Hello World
+Hello World
+
+$ pwd
+/home/user/current/directory
+
+$ cd /usr/local
+$ cd ~
+$ cd ../parent
+```
+
+```bash
+$ echo 'This is a single quoted string'
+This is a single quoted string
+
+$ echo "Escape sequences: \"quotes\" and \\backslash"
+Escape sequences: "quotes" and \backslash
+```
+
+```bash
+$ type echo
+echo is a shell builtin
+
+$ type ls
+ls is /usr/bin/ls
+```
+
+## Implementation Details
+
+The shell is implemented in C with the following key components:
+
+- Command parsing and tokenization
+- Built-in command handling
+- External program execution
+- PATH environment variable management
+- Advanced string parsing with quote and escape sequence support
+
+## Planned Features (TODO)
+
+### Redirection
+
+- **Basic Redirection**
+  - [ ] Redirect stdout (`>`)
+  - [ ] Redirect stderr (`2>`)
+  - [ ] Append stdout (`>>`)
+  - [ ] Append stderr (`2>>`)
+
+### Autocompletion
+
+- **Command Completion**
+  - [ ] Builtin command completion
+  - [ ] Executable completion
+  - [ ] Multiple completions
+  - [ ] Partial completions
+- **Argument Completion**
+  - [ ] Builtin completion with arguments
+  - [ ] Missing completions
+
+### Pipelines
+
+- **Command Chaining**
+  - [ ] Dual-command pipeline (`|`)
+  - [ ] Pipelines with built-ins
+  - [ ] Multi-command pipelines
+
+### History Management
+
+- **Interactive History**
+
+  - [ ] The `history` builtin
+  - [ ] Listing history entries
+  - [ ] Limiting history entries
+  - [ ] Up-arrow navigation
+  - [ ] Down-arrow navigation
+  - [ ] Executing commands from history
+
+- **History Persistence**
+  - [ ] Read history from file
+  - [ ] Write history to file
+  - [ ] Append history to file
+  - [ ] Read history on startup
+  - [ ] Write history on exit
+  - [ ] Append history on exit
+
+## License
+
+This project is part of the [CodeCrafters Shell Challenge](https://app.codecrafters.io/courses/shell/overview).
