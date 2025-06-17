@@ -214,9 +214,16 @@ int parse_command(const char *input, Command *cmd)
       }
       else
       {
-        if (*current == '\\' && !in_quotes)
+        if (*current == '\\')
         {
-          memmove(current, current + 1, strlen(current));
+          if (!in_quotes)
+          {
+            memmove(current, current + 1, strlen(current));
+          }
+          else if (quote == '\"' && (*(current + 1) == '\\' || *(current + 1) == '\"'))
+          {
+            memmove(current, current + 1, strlen(current));
+          }
         }
         current++;
       }
