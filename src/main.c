@@ -71,10 +71,12 @@ void execute_echo(const Command *cmd, const Redirection *redir)
 {
   if (redir->type == REDIRECT_STDOUT)
     freopen(redir->filepath, "w", stdout);
-  else if (redir->type == REDIRECT_STDERR)
-    freopen(redir->filepath, "w", stderr);
   else if (redir->type == REDIRECT_STDOUT_APPEND)
     freopen(redir->filepath, "a", stdout);
+  else if (redir->type == REDIRECT_STDERR)
+    freopen(redir->filepath, "w", stderr);
+  else if (redir->type == REDIRECT_STDERR_APPEND)
+    freopen(redir->filepath, "a", stderr);
 
   // Calculate the end index based on whether there's redirection
   int end_index = redir->type != REDIRECT_NONE ? redir->operator_index : cmd->arg_count;
@@ -458,6 +460,12 @@ Redirection parse_redirection(const Command *cmd)
     else if (strcmp(cmd->args[i], "1>>") == 0 || strcmp(cmd->args[i], ">>") == 0)
     {
       redir.type = REDIRECT_STDOUT_APPEND;
+      redir.operator_index = i;
+      break;
+    }
+    else if (strcmp(cmd->args[i], "2>>") == 0)
+    {
+      redir.type = REDIRECT_STDERR_APPEND;
       redir.operator_index = i;
       break;
     }
