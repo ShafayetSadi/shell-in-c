@@ -38,7 +38,7 @@ typedef struct
 
 // Function declarations
 void get_input_command(char *input);
-void execute_echo(const Command *cmd, bool isRedirect);
+void execute_echo(const Command *cmd, const Redirection *redir);
 void execute_pwd(const Command *cmd, bool isRedirect);
 void execute_cd(const char *target_dir);
 void execute_type(const Command *cmd, char **path_tokens, int path_count, bool isRedirect);
@@ -48,9 +48,10 @@ void free_command(Command *cmd);
 int check_builtin_command(const Command *cmd, bool isRedirect);
 int find_command_in_path(const Command *cmd, char **path_tokens, int path_count, bool isRedirect);
 int parse_command(const char *input, Command *cmd);
-int execute_program(const char *program, char **path_tokens, int path_count, char **args, int arg_count, bool isRedirect);
+int execute_program(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
 void print_debug_info(const Command *cmd);
-void execute_command(const Command *cmd, char **path_tokens, int path_count, bool isRedirect);
+void execute_command(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
+Redirection parse_redirection(const Command *cmd);
 
 void get_input_command(char *input)
 {
@@ -66,33 +67,24 @@ void get_input_command(char *input)
   input[strcspn(input, "\n")] = '\0'; // Remove trailing newline
 }
 
-void execute_echo(const Command *cmd, bool isRedirect)
+void execute_echo(const Command *cmd, const Redirection *redir)
 {
-  if (isRedirect)
-  {
-    char *filepath = cmd->args[cmd->arg_count - 1];
-    FILE *file = fopen(filepath, "w");
-    if (file == NULL)
-    {
-      perror("Error opening file");
-      return;
-    }
-    for (int i = 1; i < cmd->arg_count - 2; i++)
-    {
-      fprintf(file, "%s ", cmd->args[i]);
-    }
-    fprintf(file, "\n");
+  if (redir->type == REDIRECT_STDOUT)
+    freopen(redir->filepath, "w", stdout);
+  else if (redir->type == REDIRECT_STDERR)
+    freopen(redir->filepath, "w", stderr);
 
-    fclose(file);
-  }
-  else
+  // Calculate the end index based on whether there's redirection
+  int end_index = redir->type != REDIRECT_NONE ? redir->operator_index : cmd->arg_count;
+
+  for (int i = 1; i < end_index; i++)
   {
-    for (int i = 1; i < cmd->arg_count; i++)
-    {
-      printf("%s ", cmd->args[i]);
-    }
-    printf("\n");
+    printf("%s ", cmd->args[i]);
   }
+  printf("\n");
+
+  fflush(stdout);
+  freopen("/dev/tty", "w", stdout);
 }
 
 void execute_pwd(const Command *cmd, bool isRedirect)
@@ -352,17 +344,18 @@ int parse_command(const char *input, Command *cmd)
   return 1;
 }
 
-int execute_program(const char *program, char **path_tokens, int path_count, char **args, int arg_count, bool isRedirect)
+int execute_program(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
 {
   pid_t pid = fork();
   if (pid == 0)
   {
     // Child process
-    if (isRedirect)
+
+    if (redir->type != REDIRECT_NONE)
     {
-      char *filepath = NULL;
+      char *filepath = redir->filepath;
       int new_arg_count = 0;
-      char **new_args = malloc((arg_count + 1) * sizeof(char *));
+      char **new_args = malloc((cmd->arg_count + 1) * sizeof(char *));
 
       if (new_args == NULL)
       {
@@ -371,33 +364,35 @@ int execute_program(const char *program, char **path_tokens, int path_count, cha
       }
 
       // Copy arguments until redirection operator
-      for (int i = 0; i < arg_count; i++)
+      for (int i = 0; i < redir->operator_index; i++)
       {
-        if (strcmp(args[i], ">") == 0 || strcmp(args[i], "1>") == 0)
-        {
-          if (i + 1 < arg_count)
-          {
-            filepath = args[i + 1];
-          }
-          break;
-        }
-        new_args[new_arg_count++] = args[i];
+        new_args[new_arg_count++] = cmd->args[i];
       }
       new_args[new_arg_count] = NULL;
 
-      // Redirect stdout to file
+      // Redirect output to file
       if (filepath != NULL)
       {
-        int fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        int flags = O_WRONLY | O_CREAT;
+        if (redir->type == REDIRECT_STDOUT || redir->type == REDIRECT_STDERR)
+        {
+          flags |= O_TRUNC;
+        }
+        else
+        {
+          flags |= O_APPEND;
+        }
+        int fd = open(filepath, flags, 0644);
         if (fd == -1)
         {
           perror("Error opening file");
           free(new_args);
           exit(1);
         }
-        if (dup2(fd, STDOUT_FILENO) == -1)
+        int target_fd = (redir->type == REDIRECT_STDOUT) ? STDOUT_FILENO : STDERR_FILENO;
+        if (dup2(fd, target_fd) == -1)
         {
-          perror("Error redirecting stdout");
+          perror("Error redirecting output");
           close(fd);
           free(new_args);
           exit(1);
@@ -406,13 +401,13 @@ int execute_program(const char *program, char **path_tokens, int path_count, cha
       }
 
       // Execute the program with modified arguments
-      execvp(program, new_args);
+      execvp(cmd->name, new_args);
       free(new_args);
       exit(127);
     }
     else
     {
-      execvp(program, args);
+      execvp(cmd->name, cmd->args);
       exit(127);
     }
   }
@@ -445,8 +440,39 @@ void print_debug_info(const Command *cmd)
   printf("\n");
 }
 
-void execute_command(const Command *cmd, char **path_tokens, int path_count, bool isRedirect)
+Redirection parse_redirection(const Command *cmd)
 {
+  Redirection redir = {REDIRECT_NONE, NULL, -1};
+  for (int i = 0; i < cmd->arg_count; i++)
+  {
+    if (strcmp(cmd->args[i], ">") == 0 || strcmp(cmd->args[i], "1>") == 0)
+    {
+      redir.type = REDIRECT_STDOUT;
+      redir.operator_index = i;
+      break;
+    }
+    if (strcmp(cmd->args[i], "2>") == 0)
+    {
+      redir.type = REDIRECT_STDERR;
+      redir.operator_index = i;
+      break;
+    }
+  }
+
+  if (redir.type != REDIRECT_NONE)
+  {
+    if (redir.operator_index + 1 < cmd->arg_count)
+    {
+      redir.filepath = cmd->args[redir.operator_index + 1];
+    }
+  }
+
+  return redir;
+}
+
+void execute_command(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
+{
+  bool isRedirect = redir->type == REDIRECT_STDOUT;
   if (strcmp(cmd->name, "exit") == 0)
   {
     free_command((Command *)cmd);
@@ -455,7 +481,7 @@ void execute_command(const Command *cmd, char **path_tokens, int path_count, boo
   }
   else if (strcmp(cmd->name, "echo") == 0)
   {
-    execute_echo(cmd, isRedirect);
+    execute_echo(cmd, redir);
   }
   else if (strcmp(cmd->name, "pwd") == 0)
   {
@@ -471,7 +497,7 @@ void execute_command(const Command *cmd, char **path_tokens, int path_count, boo
   }
   else
   {
-    if (!execute_program(cmd->name, path_tokens, path_count, cmd->args, cmd->arg_count, isRedirect))
+    if (!execute_program(cmd, path_tokens, path_count, redir))
     {
       not_found(cmd->name);
     }
@@ -536,17 +562,8 @@ int main(int argc, char *argv[])
     }
     // print_debug_info(&cmd);
 
-    bool isRedirect = false;
-    for (int i = 0; i < cmd.arg_count; i++)
-    {
-      if (strcmp(cmd.args[i], ">") == 0 || strcmp(cmd.args[i], "1>") == 0)
-      {
-        isRedirect = true;
-        break;
-      }
-    }
-
-    execute_command(&cmd, path_tokens, path_count, isRedirect);
+    Redirection redir = parse_redirection(&cmd);
+    execute_command(&cmd, path_tokens, path_count, &redir);
     free_command(&cmd);
   }
 
