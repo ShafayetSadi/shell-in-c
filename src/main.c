@@ -73,6 +73,8 @@ void execute_echo(const Command *cmd, const Redirection *redir)
     freopen(redir->filepath, "w", stdout);
   else if (redir->type == REDIRECT_STDERR)
     freopen(redir->filepath, "w", stderr);
+  else if (redir->type == REDIRECT_STDOUT_APPEND)
+    freopen(redir->filepath, "a", stdout);
 
   // Calculate the end index based on whether there's redirection
   int end_index = redir->type != REDIRECT_NONE ? redir->operator_index : cmd->arg_count;
@@ -375,13 +377,9 @@ int execute_program(const Command *cmd, char **path_tokens, int path_count, cons
       {
         int flags = O_WRONLY | O_CREAT;
         if (redir->type == REDIRECT_STDOUT || redir->type == REDIRECT_STDERR)
-        {
           flags |= O_TRUNC;
-        }
         else
-        {
           flags |= O_APPEND;
-        }
         int fd = open(filepath, flags, 0644);
         if (fd == -1)
         {
@@ -389,7 +387,7 @@ int execute_program(const Command *cmd, char **path_tokens, int path_count, cons
           free(new_args);
           exit(1);
         }
-        int target_fd = (redir->type == REDIRECT_STDOUT) ? STDOUT_FILENO : STDERR_FILENO;
+        int target_fd = (redir->type == REDIRECT_STDOUT || redir->type == REDIRECT_STDOUT_APPEND) ? STDOUT_FILENO : STDERR_FILENO;
         if (dup2(fd, target_fd) == -1)
         {
           perror("Error redirecting output");
@@ -451,9 +449,15 @@ Redirection parse_redirection(const Command *cmd)
       redir.operator_index = i;
       break;
     }
-    if (strcmp(cmd->args[i], "2>") == 0)
+    else if (strcmp(cmd->args[i], "2>") == 0)
     {
       redir.type = REDIRECT_STDERR;
+      redir.operator_index = i;
+      break;
+    }
+    else if (strcmp(cmd->args[i], "1>>") == 0 || strcmp(cmd->args[i], ">>") == 0)
+    {
+      redir.type = REDIRECT_STDOUT_APPEND;
       redir.operator_index = i;
       break;
     }
