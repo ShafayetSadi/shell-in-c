@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 #define INPUT_SIZE 1024
 #define MAX_PATH_TOKENS 100
@@ -37,7 +39,6 @@ typedef struct
 } Redirection;
 
 // Function declarations
-void get_input_command(char *input);
 void execute_echo(const Command *cmd, const Redirection *redir);
 void execute_pwd(const Command *cmd, bool isRedirect);
 void execute_cd(const char *target_dir);
@@ -52,20 +53,8 @@ int execute_program(const Command *cmd, char **path_tokens, int path_count, cons
 void print_debug_info(const Command *cmd);
 void execute_command(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
 Redirection parse_redirection(const Command *cmd);
-
-void get_input_command(char *input)
-{
-  if (fgets(input, INPUT_SIZE, stdin) == NULL)
-  {
-    if (feof(stdin))
-    {
-      exit(0);
-    }
-    perror("Error reading input");
-    exit(1);
-  }
-  input[strcspn(input, "\n")] = '\0'; // Remove trailing newline
-}
+char *command_generator(const char *text, int state);
+char **my_completion(const char *text, int start, int end);
 
 void execute_echo(const Command *cmd, const Redirection *redir)
 {
@@ -482,6 +471,32 @@ Redirection parse_redirection(const Command *cmd)
   return redir;
 }
 
+char *command_generator(const char *text, int state)
+{
+  static int list_index;
+  static const char *commands[] = {"echo", "exit", "type", "pwd", "cd", NULL};
+
+  if (state == 0)
+    list_index = 0;
+
+  while (commands[list_index])
+  {
+    const char *cmd = commands[list_index++];
+    if (strncmp(cmd, text, strlen(text)) == 0)
+    {
+      return strdup(cmd);
+    }
+  }
+
+  return NULL;
+}
+
+char **my_completion(const char *text, int start, int end)
+{
+  rl_attempted_completion_over = 1;
+  return rl_completion_matches(text, command_generator);
+}
+
 void execute_command(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
 {
   bool isRedirect = redir->type == REDIRECT_STDOUT;
@@ -519,8 +534,9 @@ void execute_command(const Command *cmd, char **path_tokens, int path_count, con
 int main(int argc, char *argv[])
 {
   setbuf(stdout, NULL); // Flush after every printf
+  rl_attempted_completion_function = my_completion;
+  rl_bind_key('\t', rl_complete);
 
-  char input[INPUT_SIZE];
   char *path_tokens[MAX_PATH_TOKENS];
   int path_count = 0;
 
@@ -557,15 +573,11 @@ int main(int argc, char *argv[])
   }
   free(path_copy);
 
-  while (true)
+  char *input;
+  while ((input = readline("$ ")) != NULL)
   {
-    printf("$ ");
-    get_input_command(input);
-
-    if (strlen(input) == 0)
-    {
-      continue;
-    }
+    if (*input)
+      add_history(input);
 
     Command cmd = {0};
     if (!parse_command(input, &cmd))
@@ -577,6 +589,7 @@ int main(int argc, char *argv[])
     Redirection redir = parse_redirection(&cmd);
     execute_command(&cmd, path_tokens, path_count, &redir);
     free_command(&cmd);
+    free(input);
   }
 
   free_path_tokens(path_tokens, path_count);
