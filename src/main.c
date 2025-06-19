@@ -43,17 +43,17 @@ typedef struct
 } Redirection;
 
 // Function declarations
-void execute_echo(const Command *cmd, const Redirection *redir);
+void execute_echo(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
 void execute_pwd(const Command *cmd, bool isRedirect);
 void execute_cd(const char *target_dir);
-void execute_type(const Command *cmd, char **path_tokens, int path_count, bool isRedirect);
+void execute_type(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
 void not_found(const char *command);
 void free_path_tokens(char **tokens, int count);
 void free_command(Command *cmd);
-int check_builtin_command(const Command *cmd, bool isRedirect);
-int find_command_in_path(const Command *cmd, char **path_tokens, int path_count, bool isRedirect);
+int check_builtin_command(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
+int find_command_in_path(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
 int parse_command(const char *input, Command *cmd);
-int execute_program(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
+int execute_program(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir, const char *input);
 void print_debug_info(const Command *cmd);
 void execute_command(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir);
 Redirection parse_redirection(const Command *cmd);
@@ -144,8 +144,52 @@ char **get_executables_from_path()
   return executables;
 }
 
-void execute_echo(const Command *cmd, const Redirection *redir)
+void execute_echo(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
 {
+  int pipeline_index = -1;
+  for (int i = 0; i < cmd->arg_count; i++)
+  {
+    if (strcmp(cmd->args[i], "|") == 0)
+    {
+      pipeline_index = i;
+      break;
+    }
+  }
+
+  if (pipeline_index != -1)
+  {
+    char input[INPUT_SIZE] = {0};
+    for (int i = 1; i < pipeline_index; i++)
+    {
+      strcat(input, cmd->args[i]);
+      strcat(input, " ");
+    }
+    if (strlen(input) > 0 && input[strlen(input) - 1] == ' ')
+    {
+      input[strlen(input) - 1] = '\n';
+      input[strlen(input)] = '\0';
+    }
+
+    Command new_cmd = {0};
+
+    new_cmd.args = malloc(MAX_ARGS * sizeof(char *));
+    new_cmd.arg_count = cmd->arg_count - pipeline_index - 1;
+
+    for (int i = 0; i < new_cmd.arg_count; i++)
+    {
+      new_cmd.args[i] = cmd->args[pipeline_index + i + 1];
+    }
+    new_cmd.args[new_cmd.arg_count] = NULL;
+    new_cmd.name = new_cmd.args[0];
+
+    if (execute_program(&new_cmd, path_tokens, path_count, redir, input))
+    {
+      not_found(cmd->name);
+    }
+
+    return;
+  }
+
   if (redir->type == REDIRECT_STDOUT)
     freopen(redir->filepath, "w", stdout);
   else if (redir->type == REDIRECT_STDOUT_APPEND)
@@ -200,7 +244,6 @@ void execute_cd(const char *target_dir)
     dir = getenv("HOME");
     if (dir == NULL)
     {
-      printf("cd: HOME environment variable not set\n");
       return;
     }
   }
@@ -211,11 +254,11 @@ void execute_cd(const char *target_dir)
   }
 }
 
-void execute_type(const Command *cmd, char **path_tokens, int path_count, bool isRedirect)
+void execute_type(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
 {
-  if (!check_builtin_command(cmd, isRedirect))
+  if (!check_builtin_command(cmd, path_tokens, path_count, redir))
   {
-    if (!find_command_in_path(cmd, path_tokens, path_count, isRedirect))
+    if (!find_command_in_path(cmd, path_tokens, path_count, redir))
     {
       printf("%s: not found\n", cmd->args[1]);
     }
@@ -247,8 +290,68 @@ void free_command(Command *cmd)
   }
 }
 
-int check_builtin_command(const Command *cmd, bool isRedirect)
+int check_builtin_command(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
 {
+  const char *builtin_commands[] = {"echo", "exit", "type", "pwd", "cd"};
+  const int num_builtins = sizeof(builtin_commands) / sizeof(builtin_commands[0]);
+
+  bool isBuiltin = false;
+
+  int pipeline_index = -1;
+  for (int i = 0; i < cmd->arg_count; i++)
+  {
+    if (strcmp(cmd->args[i], "|") == 0)
+    {
+      pipeline_index = i;
+      break;
+    }
+  }
+
+  if (pipeline_index != -1)
+  {
+    char input[INPUT_SIZE] = {0};
+    for (int i = 0; i < num_builtins; i++)
+    {
+      if (strcmp(builtin_commands[i], cmd->args[1]) == 0)
+      {
+        snprintf(input, INPUT_SIZE, "%s is a shell builtin", cmd->args[1]);
+        isBuiltin = true;
+        break;
+      }
+    }
+    if (!isBuiltin)
+      return 0;
+
+    for (int i = 1; i < pipeline_index; i++)
+    {
+      strcat(input, cmd->args[i]);
+      strcat(input, " ");
+    }
+    if (strlen(input) > 0 && input[strlen(input) - 1] == ' ')
+      input[strlen(input) - 1] = '\0';
+
+    Command new_cmd = {0};
+
+    new_cmd.args = malloc(MAX_ARGS * sizeof(char *));
+    new_cmd.arg_count = cmd->arg_count - pipeline_index - 1;
+
+    for (int i = 0; i < new_cmd.arg_count; i++)
+    {
+      new_cmd.args[i] = cmd->args[pipeline_index + i + 1];
+    }
+    new_cmd.args[new_cmd.arg_count] = NULL;
+    new_cmd.name = new_cmd.args[0];
+
+    if (execute_program(&new_cmd, path_tokens, path_count, redir, input))
+    {
+      not_found(cmd->name);
+    }
+
+    return 1;
+  }
+
+  bool isRedirect = (redir->type != REDIRECT_NONE);
+
   FILE *file = NULL;
   if (isRedirect)
   {
@@ -260,10 +363,6 @@ int check_builtin_command(const Command *cmd, bool isRedirect)
       return 0;
     }
   }
-  const char *builtin_commands[] = {"echo", "exit", "type", "pwd", "cd"};
-  const int num_builtins = sizeof(builtin_commands) / sizeof(builtin_commands[0]);
-
-  bool isBuiltin = false;
   for (int i = 0; i < num_builtins; i++)
   {
     if (strcmp(builtin_commands[i], cmd->args[1]) == 0)
@@ -285,11 +384,65 @@ int check_builtin_command(const Command *cmd, bool isRedirect)
   return 0;
 }
 
-int find_command_in_path(const Command *cmd, char **path_tokens, int path_count, bool isRedirect)
+int find_command_in_path(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
 {
+  bool isRedirect = (redir->type != REDIRECT_NONE);
   char fullpath[MAX_PATH_LENGTH];
   struct stat file_stat;
   FILE *file = NULL;
+  bool cmdFound = false;
+
+  int pipeline_index = -1;
+  for (int i = 0; i < cmd->arg_count; i++)
+  {
+    if (strcmp(cmd->args[i], "|") == 0)
+    {
+      pipeline_index = i;
+      break;
+    }
+  }
+
+  if (pipeline_index != -1)
+  {
+    char input[INPUT_SIZE] = {0};
+    for (int i = 0; i < path_count; i++)
+    {
+      snprintf(fullpath, sizeof(fullpath), "%s/%s", path_tokens[i], cmd->args[1]);
+
+      if (stat(fullpath, &file_stat) == 0)
+      {
+        if (S_ISREG(file_stat.st_mode) && (file_stat.st_mode & S_IXUSR))
+        {
+          snprintf(input, INPUT_SIZE, "%s is %s\n", cmd->args[1], fullpath);
+          cmdFound = true;
+          break;
+        }
+      }
+    }
+
+    if (!cmdFound)
+      return 0;
+
+    Command new_cmd = {0};
+
+    new_cmd.args = malloc(MAX_ARGS * sizeof(char *));
+    new_cmd.arg_count = cmd->arg_count - pipeline_index - 1;
+
+    for (int i = 0; i < new_cmd.arg_count; i++)
+    {
+      new_cmd.args[i] = cmd->args[pipeline_index + i + 1];
+    }
+    new_cmd.args[new_cmd.arg_count] = NULL;
+    new_cmd.name = new_cmd.args[0];
+
+    if (execute_program(&new_cmd, path_tokens, path_count, redir, input))
+    {
+      not_found(cmd->name);
+    }
+    if (cmdFound)
+      return 1;
+    return 0;
+  }
 
   if (isRedirect)
   {
@@ -302,7 +455,6 @@ int find_command_in_path(const Command *cmd, char **path_tokens, int path_count,
     }
   }
 
-  bool cmdFound = false;
   for (int i = 0; i < path_count; i++)
   {
     snprintf(fullpath, sizeof(fullpath), "%s/%s", path_tokens[i], cmd->args[1]);
@@ -425,7 +577,7 @@ int parse_command(const char *input, Command *cmd)
   return 1;
 }
 
-int execute_program(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
+int execute_program(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir, const char *input)
 {
   int pipeline_index = -1;
   for (int i = 0; i < cmd->arg_count; i++)
@@ -437,9 +589,15 @@ int execute_program(const Command *cmd, char **path_tokens, int path_count, cons
     }
   }
 
+  int pipefds[2];
   // No pipeline: just handle redirection and exec
   if (pipeline_index == -1)
   {
+    if (input != NULL)
+    {
+      pipe(pipefds);
+    }
+
     pid_t pid = fork();
     if (pid == 0)
     {
@@ -496,12 +654,33 @@ int execute_program(const Command *cmd, char **path_tokens, int path_count, cons
       }
       else
       {
-        execvp(cmd->name, cmd->args);
-        exit(127);
+        if (input != NULL)
+        {
+          close(pipefds[1]);              // Close write end
+          dup2(pipefds[0], STDIN_FILENO); // Redirect stdin to read end
+          close(pipefds[0]);
+
+          execvp(cmd->name, cmd->args);
+          perror("execvp failed");
+          exit(1);
+        }
+        else
+        {
+          execvp(cmd->name, cmd->args);
+          exit(127);
+        }
       }
     }
     else if (pid > 0)
     {
+      if (input != NULL)
+      {
+        close(pipefds[0]); // Close read end
+
+        // Write input to less
+        write(pipefds[1], input, strlen(input));
+        close(pipefds[1]); // Close write end to signal EOF
+      }
       // Parent process
       int status;
       wait(&status);
@@ -510,19 +689,15 @@ int execute_program(const Command *cmd, char **path_tokens, int path_count, cons
         int exit_status = WEXITSTATUS(status);
         if (exit_status == 127)
         {
-          // Command not found
-          return 1;
+          return 1; // Command not found
         }
-        // Command found (even if it failed)
-        return 0;
+        return 0; // Command found, but failed
       }
     }
-    // Defensive: treat abnormal exit as "not found"
     return 1;
   }
 
   // Pipeline: cmd1 | cmd2
-  int pipefds[2];
   if (pipe(pipefds) == -1)
   {
     perror("Pipe failed");
@@ -559,6 +734,15 @@ int execute_program(const Command *cmd, char **path_tokens, int path_count, cons
     close(pipefds[1]);              // Close unused write end
     dup2(pipefds[0], STDIN_FILENO); // Redirect stdin to pipe
     close(pipefds[0]);
+
+    if (strcmp(args2[0], "type") == 0)
+    {
+      Command builtin_cmd = {.name = args2[0], .args = args2, .arg_count = args2_count};
+      Redirection dummy_redir = {REDIRECT_NONE, NULL, -1};
+      execute_type(&builtin_cmd, path_tokens, path_count, &dummy_redir);
+      exit(0);
+    }
+
     execvp(args2[0], args2);
     perror("execvp (right) failed");
     exit(127);
@@ -691,7 +875,7 @@ void execute_command(const Command *cmd, char **path_tokens, int path_count, con
   }
   else if (strcmp(cmd->name, "echo") == 0)
   {
-    execute_echo(cmd, redir);
+    execute_echo(cmd, path_tokens, path_count, redir);
   }
   else if (strcmp(cmd->name, "pwd") == 0)
   {
@@ -703,11 +887,11 @@ void execute_command(const Command *cmd, char **path_tokens, int path_count, con
   }
   else if (strcmp(cmd->name, "type") == 0 && cmd->arg_count > 1)
   {
-    execute_type(cmd, path_tokens, path_count, isRedirect);
+    execute_type(cmd, path_tokens, path_count, redir);
   }
   else
   {
-    if (execute_program(cmd, path_tokens, path_count, redir))
+    if (execute_program(cmd, path_tokens, path_count, redir, NULL))
     {
       not_found(cmd->name);
     }
