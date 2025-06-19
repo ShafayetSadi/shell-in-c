@@ -9,11 +9,15 @@
 #include <fcntl.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <dirent.h>
 
 #define INPUT_SIZE 1024
 #define MAX_PATH_TOKENS 100
 #define MAX_PATH_LENGTH 512
 #define MAX_ARGS 100
+#define INITIAL_EXEC_CAPACITY 256
+
+char **all_commands = NULL;
 
 typedef struct
 {
@@ -55,6 +59,90 @@ void execute_command(const Command *cmd, char **path_tokens, int path_count, con
 Redirection parse_redirection(const Command *cmd);
 char *command_generator(const char *text, int state);
 char **my_completion(const char *text, int start, int end);
+static int is_in_array(char **array, int count, const char *name);
+char **get_executables_from_path();
+
+static int is_in_array(char **array, int count, const char *name)
+{
+  for (int i = 0; i < count; i++)
+  {
+    if (strcmp(array[i], name) == 0)
+      return 1;
+  }
+  return 0;
+}
+
+char **get_executables_from_path()
+{
+  const char *path = getenv("PATH");
+  if (!path)
+    return NULL;
+
+  char *path_copy = strdup(path);
+
+  int exec_capacity = INITIAL_EXEC_CAPACITY;
+  int exec_count = 0;
+  char **executables = malloc(exec_capacity * sizeof(char *));
+  if (!executables)
+  {
+    free(path_copy);
+    return NULL;
+  }
+
+  char *saveptr;
+  char *dir_path = strtok_r(path_copy, ":", &saveptr);
+  while (dir_path)
+  {
+    DIR *dir = opendir(dir_path);
+    if (dir)
+    {
+      struct dirent *entry;
+      while ((entry = readdir(dir)) != NULL)
+      {
+        // Skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+          continue;
+
+        // Check for duplicates
+        if (is_in_array(executables, exec_count, entry->d_name))
+          continue;
+
+        // Build full path
+        char fullpath[MAX_PATH_LENGTH];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, entry->d_name);
+
+        struct stat st;
+        if (stat(fullpath, &st) == 0 && S_ISREG(st.st_mode) &&
+            (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
+        {
+          // Add to array
+          if (exec_count == exec_capacity)
+          {
+            exec_capacity *= 2;
+            char **tmp = realloc(executables, exec_capacity * sizeof(char *));
+            if (!tmp)
+              break;
+            executables = tmp;
+          }
+          executables[exec_count++] = strdup(entry->d_name);
+        }
+      }
+      closedir(dir);
+    }
+    dir_path = strtok_r(NULL, ":", &saveptr);
+  }
+  free(path_copy);
+
+  // Null-terminate the array
+  if (exec_count == exec_capacity)
+  {
+    char **tmp = realloc(executables, (exec_capacity + 1) * sizeof(char *));
+    if (tmp)
+      executables = tmp;
+  }
+  executables[exec_count] = NULL;
+  return executables;
+}
 
 void execute_echo(const Command *cmd, const Redirection *redir)
 {
@@ -474,17 +562,37 @@ Redirection parse_redirection(const Command *cmd)
 char *command_generator(const char *text, int state)
 {
   static int list_index;
-  static const char *commands[] = {"echo", "exit", "type", "pwd", "cd", NULL};
+  static int exec_index;
+  static int mode; // 0 = builtins, 1 = executables
+  static const char *builtins[] = {"echo", "exit", "type", "pwd", "cd", NULL};
 
   if (state == 0)
-    list_index = 0;
-
-  while (commands[list_index])
   {
-    const char *cmd = commands[list_index++];
-    if (strncmp(cmd, text, strlen(text)) == 0)
+    list_index = 0;
+    exec_index = 0;
+    mode = 0;
+  }
+
+  if (mode == 0)
+  {
+    while (builtins[list_index])
     {
-      return strdup(cmd);
+      const char *cmd = builtins[list_index++];
+      if (strncmp(cmd, text, strlen(text)) == 0)
+      {
+        return strdup(cmd);
+      }
+    }
+    mode = 1;
+  }
+
+  if (mode == 1 && all_commands)
+  {
+    while (all_commands[exec_index])
+    {
+      const char *cmd = all_commands[exec_index++];
+      if (strncmp(cmd, text, strlen(text)) == 0)
+        return strdup(cmd);
     }
   }
 
@@ -536,6 +644,7 @@ int main(int argc, char *argv[])
   setbuf(stdout, NULL); // Flush after every printf
   rl_attempted_completion_function = my_completion;
   rl_bind_key('\t', rl_complete);
+  all_commands = get_executables_from_path();
 
   char *path_tokens[MAX_PATH_TOKENS];
   int path_count = 0;
@@ -593,5 +702,6 @@ int main(int argc, char *argv[])
   }
 
   free_path_tokens(path_tokens, path_count);
+  free(all_commands);
   return 0;
 }
