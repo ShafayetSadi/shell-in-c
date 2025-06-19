@@ -427,81 +427,156 @@ int parse_command(const char *input, Command *cmd)
 
 int execute_program(const Command *cmd, char **path_tokens, int path_count, const Redirection *redir)
 {
-  pid_t pid = fork();
-  if (pid == 0)
+  int pipeline_index = -1;
+  for (int i = 0; i < cmd->arg_count; i++)
   {
-    // Child process
-
-    if (redir->type != REDIRECT_NONE)
+    if (strcmp(cmd->args[i], "|") == 0)
     {
-      char *filepath = redir->filepath;
-      int new_arg_count = 0;
-      char **new_args = malloc((cmd->arg_count + 1) * sizeof(char *));
-
-      if (new_args == NULL)
-      {
-        perror("Memory allocation failed");
-        exit(1);
-      }
-
-      // Copy arguments until redirection operator
-      for (int i = 0; i < redir->operator_index; i++)
-      {
-        new_args[new_arg_count++] = cmd->args[i];
-      }
-      new_args[new_arg_count] = NULL;
-
-      // Redirect output to file
-      if (filepath != NULL)
-      {
-        int flags = O_WRONLY | O_CREAT;
-        if (redir->type == REDIRECT_STDOUT || redir->type == REDIRECT_STDERR)
-          flags |= O_TRUNC;
-        else
-          flags |= O_APPEND;
-        int fd = open(filepath, flags, 0644);
-        if (fd == -1)
-        {
-          perror("Error opening file");
-          free(new_args);
-          exit(1);
-        }
-        int target_fd = (redir->type == REDIRECT_STDOUT || redir->type == REDIRECT_STDOUT_APPEND) ? STDOUT_FILENO : STDERR_FILENO;
-        if (dup2(fd, target_fd) == -1)
-        {
-          perror("Error redirecting output");
-          close(fd);
-          free(new_args);
-          exit(1);
-        }
-        close(fd);
-      }
-
-      // Execute the program with modified arguments
-      execvp(cmd->name, new_args);
-      free(new_args);
-      exit(127);
-    }
-    else
-    {
-      execvp(cmd->name, cmd->args);
-      exit(127);
+      pipeline_index = i;
+      break;
     }
   }
-  else if (pid > 0)
+
+  // No pipeline: just handle redirection and exec
+  if (pipeline_index == -1)
   {
-    // Parent process
-    int status;
-    wait(&status);
-    if (WIFEXITED(status))
+    pid_t pid = fork();
+    if (pid == 0)
     {
-      int exit_status = WEXITSTATUS(status);
-      if (exit_status == 127)
+      // Child process
+      if (redir->type != REDIRECT_NONE)
       {
+        char *filepath = redir->filepath;
+        int new_arg_count = 0;
+        char **new_args = malloc((cmd->arg_count + 1) * sizeof(char *));
+
+        if (new_args == NULL)
+        {
+          perror("Memory allocation failed");
+          exit(1);
+        }
+
+        // Copy arguments until redirection operator
+        for (int i = 0; i < redir->operator_index; i++)
+        {
+          new_args[new_arg_count++] = cmd->args[i];
+        }
+        new_args[new_arg_count] = NULL;
+
+        if (filepath != NULL)
+        {
+          int flags = O_WRONLY | O_CREAT;
+          if (redir->type == REDIRECT_STDOUT || redir->type == REDIRECT_STDERR)
+            flags |= O_TRUNC;
+          else
+            flags |= O_APPEND;
+
+          int fd = open(filepath, flags, 0644);
+          if (fd == -1)
+          {
+            perror("Error opening file");
+            free(new_args);
+            exit(1);
+          }
+          int target_fd = (redir->type == REDIRECT_STDOUT || redir->type == REDIRECT_STDOUT_APPEND) ? STDOUT_FILENO : STDERR_FILENO;
+          if (dup2(fd, target_fd) == -1)
+          {
+            perror("Error redirecting output");
+            close(fd);
+            free(new_args);
+            exit(1);
+          }
+          close(fd);
+        }
+
+        // Execute the program with modified arguments
+        execvp(cmd->name, new_args);
+        free(new_args);
+        exit(127);
+      }
+      else
+      {
+        execvp(cmd->name, cmd->args);
+        exit(127);
+      }
+    }
+    else if (pid > 0)
+    {
+      // Parent process
+      int status;
+      wait(&status);
+      if (WIFEXITED(status))
+      {
+        int exit_status = WEXITSTATUS(status);
+        if (exit_status == 127)
+        {
+          // Command not found
+          return 1;
+        }
+        // Command found (even if it failed)
         return 0;
       }
-      return 1;
     }
+    // Defensive: treat abnormal exit as "not found"
+    return 1;
+  }
+
+  // Pipeline: cmd1 | cmd2
+  int pipefds[2];
+  if (pipe(pipefds) == -1)
+  {
+    perror("Pipe failed");
+    return 1;
+  }
+
+  char *args1[pipeline_index + 1];
+  for (int i = 0; i < pipeline_index; i++)
+    args1[i] = cmd->args[i];
+  args1[pipeline_index] = NULL;
+
+  int args2_count = cmd->arg_count - pipeline_index - 1;
+  char *args2[args2_count + 1];
+  for (int i = 0; i < args2_count; i++)
+    args2[i] = cmd->args[pipeline_index + 1 + i];
+  args2[args2_count] = NULL;
+
+  pid_t pid1 = fork();
+  if (pid1 == 0)
+  {
+    // First child: left side of pipe
+    close(pipefds[0]);               // Close unused read end
+    dup2(pipefds[1], STDOUT_FILENO); // Redirect stdout to pipe
+    close(pipefds[1]);
+    execvp(args1[0], args1);
+    perror("execvp (left) failed");
+    exit(127);
+  }
+
+  pid_t pid2 = fork();
+  if (pid2 == 0)
+  {
+    // Second child: right side of pipe
+    close(pipefds[1]);              // Close unused write end
+    dup2(pipefds[0], STDIN_FILENO); // Redirect stdin to pipe
+    close(pipefds[0]);
+    execvp(args2[0], args2);
+    perror("execvp (right) failed");
+    exit(127);
+  }
+
+  // Parent process
+  close(pipefds[0]);
+  close(pipefds[1]);
+
+  int status1, status2;
+  waitpid(pid1, &status1, 0);
+  waitpid(pid2, &status2, 0);
+
+  // Return 1 if either side of the pipe was not found (exit code 127), else 0
+  if ((WIFEXITED(status1) && WEXITSTATUS(status1) == 127) ||
+      (WIFEXITED(status2) && WEXITSTATUS(status2) == 127))
+  {
+    return 1;
   }
   return 0;
 }
@@ -632,7 +707,7 @@ void execute_command(const Command *cmd, char **path_tokens, int path_count, con
   }
   else
   {
-    if (!execute_program(cmd, path_tokens, path_count, redir))
+    if (execute_program(cmd, path_tokens, path_count, redir))
     {
       not_found(cmd->name);
     }
